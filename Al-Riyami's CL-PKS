@@ -1,0 +1,105 @@
+from charm.toolbox.pairinggroup import PairingGroup, ZR, G1, G2, pair
+from charm.core.math.integer import randomBits, integer, bitsize
+from charm.toolbox.hash_module import Hash, int2Bytes, integer
+
+debug = False
+
+
+class CLPKS_RP03():
+
+    def __init__(self, groupObj):
+
+        global group, h
+        group = groupObj
+        h = Hash(group)
+
+    def setup(self, secparam=None):
+        P = group.random(G1)
+        s = group.random(ZR)
+        P0 = s * P
+        params = {'P': P, 'P0': P0}
+        master_key = s
+        return (params, master_key)
+
+    def partial_private_key_extract(self, master_key, ID):
+        QA = group.hash(ID, G1)
+        DA = master_key * QA
+        return DA
+
+    '''
+    DA = partial_private_key
+    xA = secret_value
+    '''
+
+    def set_private_key(self, DA, xA):
+        SA = xA * DA
+        return SA
+
+    '''
+    xA = secret_value
+    '''
+
+    def set_public_key(self, params, xA):
+        XA = xA * params['P']
+        YA = xA * params['P0']
+        PA = {'XA': XA, 'YA': YA}
+        return PA
+
+    def signature(self, params, M, SA):  # check length to make sure it is within n bits
+        a = group.random(ZR)
+        r_id = pair(params['P'], params['P'])
+        r = r_id ** a
+        v = h.hashToZr(M, r)
+        enc_M = self.encodeToZn(M)
+        U = v * SA + a * params['P']
+        if bitsize(enc_M) / 8 <= group.messageSize():
+            SIG = {'U': U, 'v': v}
+        else:
+            print("Message cannot be signed")
+            return None
+        return SIG
+
+    def verify(self, params, PA, M, ID, SIG):
+        QA = group.hash(ID, G1)
+        x_id = pair(PA['XA'], params['P0'])
+        y_id = pair(PA['YA'], params['P'])
+        if (x_id != y_id):
+            print("Verification Stop!")
+            return None
+        r1 = pair(SIG['U'], params['P'])
+        r2 = pair(QA, -PA['YA'])
+        r = r1 * (r2 ** SIG['v'])
+        if (SIG['v'] == h.hashToZr(M, r)):
+            print("Successful Verification")
+        else:
+            print("Verification Failed")
+
+    def encodeToZn(self, message):
+        assert type(message) == bytes, "Input must be of type bytes"
+        return integer(message)
+
+    def decodeFromZn(self, element):
+        if type(element) == integer:
+            msg = int2Bytes(element)
+            return msg
+        return None
+
+
+def main():
+    group = PairingGroup('SS512', secparam=1024)
+    clpks = CLPKS_RP03(group)
+    (params, master_key) = clpks.setup()
+    ID = 'sober'
+    print(ID + " wanna communicate with me,verification start")
+    partial_private_key = clpks.partial_private_key_extract(master_key, ID)
+    secret_value = group.random(ZR)
+    private_key = clpks.set_private_key(partial_private_key, secret_value)
+    public_key = clpks.set_public_key(params, secret_value)
+    msg = b'hello world!!!!!'
+    signature_value = clpks.signature(params, msg, private_key)
+    print(signature_value)
+    varification_value = clpks.verify(params, public_key, msg, ID, signature_value)
+
+
+if __name__ == '__main__':
+    main()
